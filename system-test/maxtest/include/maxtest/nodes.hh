@@ -92,6 +92,10 @@ public:
     const char* access_sudo() const;
     const char* sshkey() const;
 
+    const std::string& ip4s() const;
+
+    SharedData& shared();
+
     const std::string m_name;       /**< E.g. "node_001" */
 
 private:
