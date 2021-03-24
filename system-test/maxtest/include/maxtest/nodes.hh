@@ -10,6 +10,7 @@
 #include <maxtest/ccdefs.hh>
 #include <maxbase/string.hh>
 #include <maxtest/mariadb_func.hh>
+#include <memory>
 
 typedef std::set<std::string> StringSet;
 
@@ -32,8 +33,8 @@ class VMNode
 {
 public:
     VMNode(SharedData& shared, const std::string& name);
-    VMNode(VMNode&& rhs);
     ~VMNode();
+    VMNode(const VMNode&) = delete;
 
     bool init_ssh_master();
 
@@ -171,15 +172,6 @@ public:
      */
     bool check_nodes_ssh();
 
-    /**
-     * Read node settings such as IPs, sshkey, etc from network config contents.
-     *
-     * @param nwconfig Network config values
-     * @param prefix Key prefix
-     * @return Number of of nodes successfully read and created
-     */
-    int read_basic_env(const mxt::NetworkConfig& nwconfig, const std::string& prefix);
-
     void write_env_vars();
 
     int n_nodes() const;
@@ -200,14 +192,14 @@ protected:
 
     virtual bool init_ssh_masters();
 
-    mxt::VMNode&       node(int i);
-    const mxt::VMNode& node(int i) const;
+    mxt::VMNode*       node(int i);
+    const mxt::VMNode* node(int i) const;
 
     void clear_vms();
     bool add_node(const mxt::NetworkConfig& nwconfig, const std::string& name);
 
 private:
-    std::vector<mxt::VMNode> m_vms;
+    std::vector<std::unique_ptr<mxt::VMNode>> m_vms;
 
     bool check_node_ssh(int node);
 };
