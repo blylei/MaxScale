@@ -30,7 +30,7 @@ public:
     /**
      * Wait until slaves are up-to-date. Only considers the first gtid-triplet.
      */
-    bool               sync_slaves(int node = 0);
+    bool               sync_slaves(int servers = 0);
     const std::string& type_string() const override;
 
     /**
