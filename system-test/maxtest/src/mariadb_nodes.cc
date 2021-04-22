@@ -535,32 +535,6 @@ std::string MariaDBCluster::anonymous_users_query() const
     return "SELECT CONCAT('\\'', user, '\\'@\\'', host, '\\'') FROM mysql.user WHERE user = ''";
 }
 
-bool MariaDBCluster::prepare_for_test(int i)
-{
-    auto& srv = m_backends[i];
-    // This is required until the system test code can modify users on its own.
-    auto standard_user_conn = srv->try_open_connection();
-    if (!standard_user_conn->is_open())
-    {
-        return false;
-    }
-
-    bool rval = true;
-    if (srv->ping_or_open_admin_connection())
-    {
-        auto conn = srv->admin_connection();
-        if (conn->cmd("FLUSH HOSTS;") && conn->cmd("SET GLOBAL max_connections=10000"))
-        {
-            conn->try_cmd("SET GLOBAL max_connect_errors=10000000");    // fails on Xpand
-        }
-        else
-        {
-            rval = false;
-        }
-    }
-    return rval;
-}
-
 bool MariaDBCluster::prepare_servers_for_test()
 {
     // Remove anonymous users. TODO: Extend this to detect leftover users and create any missing users.
@@ -573,9 +547,10 @@ bool MariaDBCluster::prepare_servers_for_test()
         if (res)
         {
             drop_ok = true;
-            if (res->get_row_count() > 0)
+            int rows = res->get_row_count();
+            if (rows > 0)
             {
-                logger().log_msgf("Detected anonymous users on %s, dropping them.", name().c_str());
+                logger().log_msgf("Detected %i anonymous users on %s, dropping them.", rows, name().c_str());
                 while (res->next_row())
                 {
                     string user = res->get_string(0);
@@ -592,10 +567,40 @@ bool MariaDBCluster::prepare_servers_for_test()
     bool rval = false;
     if (drop_ok)
     {
-        auto func = [this](int i) {
-                return prepare_for_test(i);
-            };
-        rval = run_on_every_backend(func);
+        // Check that normal connections to backends work. If ssl-mode is on, the connector refuses non-ssl
+        // connections.
+        bool normal_conn_ok = check_normal_conns();
+        if (!normal_conn_ok)
+        {
+            // Try to regenerate users. The user generation script replaces users. As the cluster
+            // is replicating, doing this on the master should be enough.
+            logger().log_msgf("Recreating users on '%s' with SSL %s.",
+                              m_backends[0]->m_vm.m_name.c_str(), ssl ? "on" : "off");
+            create_users(0);
+            sleep(1); // Wait for cluster sync. Could come up with something better.
+            normal_conn_ok = check_normal_conns();
+            logger().log_msgf("Connections to %s %s after recreating users.",
+                              name().c_str(), normal_conn_ok ? "worked" : "failed");
+        }
+
+        if (normal_conn_ok)
+        {
+            rval = true;
+            for (int i = 0; i < N; i++)
+            {
+                auto srv = m_backends[i].get();
+                srv->ping_or_open_admin_connection();
+                auto conn = srv->admin_connection();
+                if (conn->cmd("SET GLOBAL max_connections=10000"))
+                {
+                    conn->try_cmd("SET GLOBAL max_connect_errors=10000000");    // fails on Xpand
+                }
+                else
+                {
+                    rval = false;
+                }
+            }
+        }
     }
 
     return rval;
@@ -1025,6 +1030,25 @@ bool MariaDBCluster::run_on_every_backend(const std::function<bool(int)>& func)
         funcs.push_back(std::move(wrapper_func));
     }
     return m_shared.concurrent_run(funcs);
+}
+
+bool MariaDBCluster::check_normal_conns()
+{
+    // Check that normal connections to backends work. If ssl-mode is on, the connector refuses non-ssl
+    // connections.
+    bool rval = true;
+    for (int i = 0; i < N; i++)
+    {
+        auto srv = backend(i);
+        auto conn = srv->try_open_connection();
+        if (!conn->is_open())
+        {
+            logger().log_msgf("Connecting to '%s' with user '%s' failed. SSL was %s.",
+                              srv->m_vm.m_name.c_str(), user_name.c_str(), ssl ? "on" : "off");
+            rval = false;
+        }
+    }
+    return rval;
 }
 
 namespace maxtest

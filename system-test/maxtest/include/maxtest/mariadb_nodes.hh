@@ -468,11 +468,5 @@ private:
      */
     virtual bool check_replication() = 0;
 
-    /**
-     * Flush hosts, adjust settings, remove anonymous users, etc.
-     *
-     * @param i Node to prepare
-     * @return True on success
-     */
-    bool prepare_for_test(int i);
+    bool check_normal_conns();
 };
